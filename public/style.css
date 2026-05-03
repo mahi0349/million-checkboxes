@@ -64,11 +64,7 @@ canvas {
     top: 0;
     left: 0;
     z-index: 1;
-    cursor: grab;
-}
-
-canvas:active {
-    cursor: grabbing;
+    cursor: crosshair;
 }
 
 /* ─── UI Layer ───────────────────────────────────────── */

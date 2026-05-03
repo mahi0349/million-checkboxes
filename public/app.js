@@ -33,39 +33,19 @@ let isDragging = false;
 let dragStart = { x: 0, y: 0 };
 let cameraStart = { x: 0, y: 0 };
 let movedDuringDrag = false;
+let isCtrlPressed = false;
 
 // ─── Client-Side Rate Limiter ─────────────────────────
-// Prevents spamming the server with clicks
+// Prevents spamming clicks (90ms gap required)
 const rateLimiter = {
-    tokens: 15,          // max burst capacity
-    maxTokens: 15,
-    refillRate: 10,      // tokens per second
-    lastRefill: Date.now(),
-    cooldownUntil: 0,    // timestamp when cooldown ends
-    cooldownCount: 0,    // how many times user hit limit
-
+    lastClickTime: 0,
     canSend() {
         const now = Date.now();
-
-        // In cooldown? Block
-        if (now < this.cooldownUntil) return false;
-
-        // Refill tokens based on elapsed time
-        const elapsed = (now - this.lastRefill) / 1000;
-        this.tokens = Math.min(this.maxTokens, this.tokens + elapsed * this.refillRate);
-        this.lastRefill = now;
-
-        if (this.tokens >= 1) {
-            this.tokens -= 1;
-            this.cooldownCount = 0;
-            return true;
+        if (now - this.lastClickTime < 90) {
+            return false;
         }
-
-        // No tokens — impose escalating cooldown
-        this.cooldownCount++;
-        const cooldownMs = Math.min(this.cooldownCount * 500, 3000);
-        this.cooldownUntil = now + cooldownMs;
-        return false;
+        this.lastClickTime = now;
+        return true;
     }
 };
 
@@ -291,12 +271,41 @@ function draw() {
     ctx.restore();
 }
 
-// ─── Mouse Interaction ────────────────────────────────
+// ─── Mouse Interaction & Cursor ───────────────────────
+function updateCursor() {
+    if (isCtrlPressed) {
+        canvas.style.cursor = isDragging ? 'grabbing' : 'grab';
+    } else {
+        canvas.style.cursor = 'crosshair';
+    }
+}
+
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Control') {
+        isCtrlPressed = true;
+        updateCursor();
+    }
+});
+
+window.addEventListener('keyup', (e) => {
+    if (e.key === 'Control') {
+        isCtrlPressed = false;
+        isDragging = false; // Stop dragging if ctrl is released
+        updateCursor();
+    }
+});
+
 canvas.addEventListener('mousedown', (e) => {
-    isDragging = true;
-    movedDuringDrag = false;
-    dragStart = { x: e.clientX, y: e.clientY };
-    cameraStart = { x: camera.x, y: camera.y };
+    if (isCtrlPressed) {
+        isDragging = true;
+        movedDuringDrag = false;
+        dragStart = { x: e.clientX, y: e.clientY };
+        cameraStart = { x: camera.x, y: camera.y };
+        updateCursor();
+    } else {
+        // Normal click behavior (no dragging)
+        handleClick(e.clientX, e.clientY);
+    }
 });
 
 window.addEventListener('mousemove', (e) => {
@@ -337,11 +346,9 @@ window.addEventListener('mousemove', (e) => {
 });
 
 window.addEventListener('mouseup', (e) => {
-    if (!isDragging) return;
-    isDragging = false;
-
-    if (!movedDuringDrag) {
-        handleClick(e.clientX, e.clientY);
+    if (isDragging) {
+        isDragging = false;
+        updateCursor();
     }
 });
 
@@ -375,9 +382,9 @@ window.addEventListener('touchend', (e) => {
 
 // ─── Click Handler (No auth needed) ───────────────────
 function handleClick(clientX, clientY) {
-    // Client-side rate limiting
+    // Client-side rate limiting (90ms gap)
     if (!rateLimiter.canSend()) {
-        showToast('Slow down! Too many clicks.', 'error');
+        // Do not show toast for 90ms gap, just silently drop to feel responsive
         return;
     }
 
@@ -439,13 +446,14 @@ document.getElementById('zoom-out').addEventListener('click', () => {
 document.getElementById('reset-view').addEventListener('click', () => {
     camera.x = (GRID_COLS * CELL_SIZE) / 2;
     camera.y = (GRID_ROWS * CELL_SIZE) / 2;
-    camera.zoom = 2;
+    camera.zoom = 3;
     updateZoomDisplay();
     requestAnimationFrame(draw);
 });
 
-// ─── Init Camera — centered at 2× zoom ───────────────
+// ─── Init Camera — centered at 3× zoom ───────────────
 camera.x = (GRID_COLS * CELL_SIZE) / 2;
 camera.y = (GRID_ROWS * CELL_SIZE) / 2;
-camera.zoom = 2;
+camera.zoom = 3;
 updateZoomDisplay();
+updateCursor();
