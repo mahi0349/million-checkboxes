@@ -83,4 +83,4 @@ I opted to build custom rate limiters natively into the backend without relying 
 - **WebSocket Protection**: WebSocket frames don't pass through standard HTTP middleware. Inside the `ws.on('message')` handler, an identical logic checks `rl:ws:<IP>`. If an IP tries to toggle more than 20 checkboxes per second, the socket drops the messages, effectively neutralizing auto-clickers without impacting server performance.
 
 ## Screenshots / Demo
-*(Placeholder: Add your screenshots here by dragging and dropping images onto GitHub!)*
+<img width="1918" height="931" alt="image" src="https://github.com/user-attachments/assets/8abc19e9-88d0-4a41-b7ad-08b171df58d8" />
