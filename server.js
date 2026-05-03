@@ -4,15 +4,12 @@ const http = require('http');
 const WebSocket = require('ws');
 const Redis = require('ioredis');
 const path = require('path');
-const jwt = require('jsonwebtoken');
-const cookieParser = require('cookie-parser');
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 app.use(express.json());
-app.use(cookieParser());
 
 // Trust proxy for deployments behind reverse proxies (Render, Railway, etc.)
 app.set('trust proxy', 1);
@@ -81,7 +78,6 @@ sub = createRedisClient(redisUrl);
     }
 })();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'supersecret123';
 const GRID_SIZE = 1000 * 1000; // 1 million checkboxes
 const BUFFER_SIZE = GRID_SIZE / 8; // 125,000 bytes
 
@@ -122,123 +118,8 @@ async function setCheckboxBit(index, value) {
     }
 }
 
-// ─── Custom Rate Limiting Middleware (HTTP) ────────────
-const rateLimitMap = new Map();
-
-function httpRateLimit(req, res, next) {
-    const ip = req.ip || req.connection.remoteAddress;
-    const now = Date.now();
-    const windowMs = 1000;
-    const maxRequests = 10;
-
-    if (!rateLimitMap.has(ip)) {
-        rateLimitMap.set(ip, { count: 1, resetAt: now + windowMs });
-        return next();
-    }
-
-    const entry = rateLimitMap.get(ip);
-    if (now > entry.resetAt) {
-        entry.count = 1;
-        entry.resetAt = now + windowMs;
-        return next();
-    }
-
-    entry.count++;
-    if (entry.count > maxRequests) {
-        return res.status(429).json({ error: "Too many requests" });
-    }
-    next();
-}
-
-// Clean up rate limit map periodically
-setInterval(() => {
-    const now = Date.now();
-    for (const [ip, entry] of rateLimitMap) {
-        if (now > entry.resetAt + 5000) {
-            rateLimitMap.delete(ip);
-        }
-    }
-}, 10000);
-
-// ─── Authentication — Auto-login for direct access ───
-app.get('/auth/login', httpRateLimit, (req, res) => {
-    // Check if user already has a valid token
-    const existingToken = req.cookies.auth_token;
-    if (existingToken) {
-        try {
-            jwt.verify(existingToken, JWT_SECRET);
-            return res.redirect('/');
-        } catch (e) {
-            // Token expired, create new one
-        }
-    }
-
-    // Generate a unique anonymous user identity
-    const mockUser = {
-        id: Math.random().toString(36).substring(2, 10),
-        name: "User_" + Math.floor(Math.random() * 9000 + 1000)
-    };
-
-    const token = jwt.sign(mockUser, JWT_SECRET, { expiresIn: '24h' });
-
-    // Set token in HTTP-only cookie
-    res.cookie('auth_token', token, {
-        httpOnly: true,
-        sameSite: 'lax', // 'lax' works better across deployments
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    });
-    res.redirect('/');
-});
-
-// Auto-login API endpoint for AJAX requests (no redirect)
-app.get('/auth/auto-login', httpRateLimit, (req, res) => {
-    const existingToken = req.cookies.auth_token;
-    if (existingToken) {
-        try {
-            const user = jwt.verify(existingToken, JWT_SECRET);
-            return res.json({ success: true, user });
-        } catch (e) {
-            // Token expired, create new one
-        }
-    }
-
-    const mockUser = {
-        id: Math.random().toString(36).substring(2, 10),
-        name: "User_" + Math.floor(Math.random() * 9000 + 1000)
-    };
-
-    const token = jwt.sign(mockUser, JWT_SECRET, { expiresIn: '24h' });
-
-    res.cookie('auth_token', token, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: 24 * 60 * 60 * 1000
-    });
-
-    res.json({ success: true, user: mockUser });
-});
-
-app.get('/auth/logout', (req, res) => {
-    res.clearCookie('auth_token');
-    res.redirect('/');
-});
-
-app.get('/api/me', (req, res) => {
-    const token = req.cookies.auth_token;
-    if (!token) return res.json({ loggedIn: false });
-
-    try {
-        const user = jwt.verify(token, JWT_SECRET);
-        res.json({ loggedIn: true, user });
-    } catch (e) {
-        res.json({ loggedIn: false });
-    }
-});
-
 // Initial state fetch API
-app.get('/api/checkboxes', httpRateLimit, async (req, res) => {
+app.get('/api/checkboxes', async (req, res) => {
     try {
         const buffer = await getCheckboxBuffer();
         res.send(buffer);
@@ -247,7 +128,7 @@ app.get('/api/checkboxes', httpRateLimit, async (req, res) => {
     }
 });
 
-// ─── Health check endpoint (for deployment platforms) ──
+// Health check endpoint
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
@@ -257,31 +138,17 @@ app.get('/health', (req, res) => {
 });
 
 // ─── WebSocket Connection Management ──────────────────
+// Very strict Token Bucket Rate Limiting for WebSockets
 const wsRateLimits = new Map();
 
+// Token bucket parameters
+const BURST_CAPACITY = 20; // Max messages allowed in a quick burst
+const REFILL_RATE = 10;    // Tokens refilled per second
+const MAX_VIOLATIONS = 5;  // How many times can they hit the limit before a cooldown
+const COOLDOWN_TIME = 5000; // Cooldown time in ms if they are too aggressive
+
 wss.on('connection', async (ws, req) => {
-    const ip = req.socket.remoteAddress;
-
-    // Extract token from cookie headers for WS auth
-    let user = null;
-    if (req.headers.cookie) {
-        const tokenMatch = req.headers.cookie.match(/auth_token=([^;]+)/);
-        if (tokenMatch) {
-            try {
-                user = jwt.verify(tokenMatch[1], JWT_SECRET);
-            } catch (e) { /* ignore */ }
-        }
-    }
-
-    // Auto-assign identity for WS if no token (direct access support)
-    if (!user) {
-        user = {
-            id: Math.random().toString(36).substring(2, 10),
-            name: "Anon_" + Math.floor(Math.random() * 9000 + 1000)
-        };
-    }
-
-    ws.user = user;
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
     // Send initial state as binary on connection
     try {
@@ -293,32 +160,63 @@ wss.on('connection', async (ws, req) => {
     }
 
     ws.on('message', async (message) => {
-        // Rate Limiting (WebSocket) — in-memory
+        // --- Rate Limiting Logic ---
         const now = Date.now();
-        if (!wsRateLimits.has(ip)) {
-            wsRateLimits.set(ip, { count: 1, resetAt: now + 1000 });
-        } else {
-            const entry = wsRateLimits.get(ip);
-            if (now > entry.resetAt) {
-                entry.count = 1;
-                entry.resetAt = now + 1000;
-            } else {
-                entry.count++;
-                if (entry.count > 20) {
-                    ws.send(JSON.stringify({ error: "Rate limit exceeded" }));
-                    return;
-                }
-            }
+        let limitState = wsRateLimits.get(ip);
+        
+        if (!limitState) {
+            limitState = {
+                tokens: BURST_CAPACITY,
+                lastRefill: now,
+                violations: 0,
+                cooldownUntil: 0
+            };
+            wsRateLimits.set(ip, limitState);
         }
+
+        // Check if in cooldown
+        if (now < limitState.cooldownUntil) {
+            // Drop message entirely
+            return;
+        }
+
+        // Refill tokens
+        const elapsed = (now - limitState.lastRefill) / 1000;
+        limitState.tokens = Math.min(BURST_CAPACITY, limitState.tokens + (elapsed * REFILL_RATE));
+        limitState.lastRefill = now;
+
+        // Check if enough tokens
+        if (limitState.tokens >= 1) {
+            // Consume token and proceed
+            limitState.tokens -= 1;
+            // Decay violations slowly if they are behaving
+            if (limitState.violations > 0 && Math.random() < 0.1) {
+                limitState.violations -= 1;
+            }
+        } else {
+            // Rate limit exceeded
+            limitState.violations++;
+            
+            if (limitState.violations >= MAX_VIOLATIONS) {
+                // Aggressive behavior - impose a cooldown
+                limitState.cooldownUntil = now + COOLDOWN_TIME;
+                limitState.violations = Math.max(0, limitState.violations - 2); // reset some violations after punishment
+                ws.send(JSON.stringify({ error: "You are clicking too fast! Cooldown activated." }));
+            } else {
+                ws.send(JSON.stringify({ error: "Rate limit exceeded. Slow down." }));
+            }
+            return; // Stop processing
+        }
+        // -----------------------------
 
         try {
             const data = JSON.parse(message);
 
-            // Validate payload
+            // Validate payload strictly
             if (typeof data.index !== 'number' || data.index < 0 || data.index >= GRID_SIZE) return;
             if (typeof data.state !== 'boolean') return;
 
-            // Allow all connected users to toggle (direct access)
+            // Update state
             await setCheckboxBit(data.index, data.state);
 
             // Broadcast the update
@@ -331,7 +229,6 @@ wss.on('connection', async (ws, req) => {
                 try {
                     pub.publish('checkbox_updates', updateMsg);
                 } catch (e) {
-                    // Fallback: broadcast directly
                     broadcastDirect(updateMsg);
                 }
             } else {
@@ -341,10 +238,6 @@ wss.on('connection', async (ws, req) => {
         } catch (e) {
             // Invalid message
         }
-    });
-
-    ws.on('close', () => {
-        // cleanup if necessary
     });
 });
 
@@ -356,15 +249,22 @@ function broadcastDirect(message) {
     });
 }
 
-// Clean up WS rate limits periodically
+// Periodically clean up rate limit map
 setInterval(() => {
     const now = Date.now();
-    for (const [ip, entry] of wsRateLimits) {
-        if (now > entry.resetAt + 5000) {
+    for (const [ip, state] of wsRateLimits.entries()) {
+        if (now - state.lastRefill > 60000 && now > state.cooldownUntil) {
             wsRateLimits.delete(ip);
         }
     }
-}, 10000);
+}, 60000);
+
+// Periodically broadcast online user count
+setInterval(() => {
+    const onlineCount = wss.clients.size;
+    const msg = JSON.stringify({ online: onlineCount });
+    broadcastDirect(msg);
+}, 2000);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {

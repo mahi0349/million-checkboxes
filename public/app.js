@@ -1,21 +1,23 @@
+/* ═══════════════════════════════════════════════════════
+   Million Checkboxes — Frontend App
+   Classic Black & Crimson Edition — No Auth, Multi-User
+   ═══════════════════════════════════════════════════════ */
+
 const canvas = document.getElementById('gridCanvas');
 const ctx = canvas.getContext('2d', { alpha: false });
 
 // UI Elements
 const statusDot = document.getElementById('connection-status');
 const statusText = document.getElementById('status-text');
-const loginBtn = document.getElementById('login-btn');
-const logoutBtn = document.getElementById('logout-btn');
-const userInfo = document.getElementById('user-info');
 const toastContainer = document.getElementById('toast-container');
 const checkedCountEl = document.getElementById('checked-count');
+const onlineCountEl = document.getElementById('online-count');
 const zoomLevelEl = document.getElementById('zoom-level');
 const coordDisplay = document.getElementById('coord-display');
 const welcomeOverlay = document.getElementById('welcome-overlay');
 
 // App State
 let ws;
-let isLoggedIn = false;
 const GRID_COLS = 1000;
 const GRID_ROWS = 1000;
 const TOTAL_CHECKBOXES = GRID_COLS * GRID_ROWS;
@@ -23,8 +25,8 @@ const TOTAL_CHECKBOXES = GRID_COLS * GRID_ROWS;
 // 1 bit per checkbox = 125,000 bytes
 let checkboxState = new Uint8Array(TOTAL_CHECKBOXES / 8);
 
-// Camera / Viewport
-let camera = { x: 0, y: 0, zoom: 1 };
+// Camera / Viewport — default 2× zoom for visibility
+let camera = { x: 0, y: 0, zoom: 2 };
 const CELL_SIZE = 20;
 const BOX_SIZE = 16;
 let isDragging = false;
@@ -32,22 +34,52 @@ let dragStart = { x: 0, y: 0 };
 let cameraStart = { x: 0, y: 0 };
 let movedDuringDrag = false;
 
+// ─── Client-Side Rate Limiter ─────────────────────────
+// Prevents spamming the server with clicks
+const rateLimiter = {
+    tokens: 15,          // max burst capacity
+    maxTokens: 15,
+    refillRate: 10,      // tokens per second
+    lastRefill: Date.now(),
+    cooldownUntil: 0,    // timestamp when cooldown ends
+    cooldownCount: 0,    // how many times user hit limit
+
+    canSend() {
+        const now = Date.now();
+
+        // In cooldown? Block
+        if (now < this.cooldownUntil) return false;
+
+        // Refill tokens based on elapsed time
+        const elapsed = (now - this.lastRefill) / 1000;
+        this.tokens = Math.min(this.maxTokens, this.tokens + elapsed * this.refillRate);
+        this.lastRefill = now;
+
+        if (this.tokens >= 1) {
+            this.tokens -= 1;
+            this.cooldownCount = 0;
+            return true;
+        }
+
+        // No tokens — impose escalating cooldown
+        this.cooldownCount++;
+        const cooldownMs = Math.min(this.cooldownCount * 500, 3000);
+        this.cooldownUntil = now + cooldownMs;
+        return false;
+    }
+};
+
 // ─── Classic Black & Crimson Theme Colors ─────────────
 const COLORS = {
     bg: '#050505',
-    // Unchecked box
     boxOff: '#111111',
     boxOffBorder: '#1e1e1e',
-    // Checked box — crimson glow
     boxOn: '#dc143c',
     boxOnBorder: '#a00020',
     boxOnLight: '#ff2850',
-    // Checkmark
     checkMark: '#ffffff',
-    // Hover highlight
     hoverFill: 'rgba(220, 20, 60, 0.12)',
     hoverBorder: 'rgba(220, 20, 60, 0.3)',
-    // Grid subtle lines
     gridLine: '#0d0d0d'
 };
 
@@ -74,44 +106,9 @@ function showToast(message, type = 'info') {
     }, 3000);
 }
 
-// ─── Auto-Login Flow ──────────────────────────────────
-// Users get direct access — auto-login silently via API
-async function ensureAuth() {
-    try {
-        // Check if already logged in
-        const res = await fetch('/api/me');
-        const data = await res.json();
-
-        if (data.loggedIn) {
-            isLoggedIn = true;
-            loginBtn.classList.add('hidden');
-            logoutBtn.classList.remove('hidden');
-            userInfo.classList.remove('hidden');
-            userInfo.textContent = data.user.name;
-            return;
-        }
-
-        // Not logged in — auto-login silently via API (no redirect)
-        const loginRes = await fetch('/auth/auto-login');
-        const loginData = await loginRes.json();
-
-        if (loginData.success) {
-            isLoggedIn = true;
-            loginBtn.classList.add('hidden');
-            logoutBtn.classList.remove('hidden');
-            userInfo.classList.remove('hidden');
-            userInfo.textContent = loginData.user.name;
-        }
-    } catch (e) {
-        console.error("Auth flow failed, falling back to manual login");
-        loginBtn.classList.remove('hidden');
-    }
-}
-
-// Initial auth — but don't block the app
-ensureAuth();
-
 // ─── WebSocket Setup ──────────────────────────────────
+let reconnectDelay = 1000;
+
 function connectWebSocket() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${protocol}//${window.location.host}`);
@@ -120,16 +117,24 @@ function connectWebSocket() {
     ws.onopen = () => {
         statusDot.className = 'status-dot connected';
         statusText.textContent = 'Live';
+        reconnectDelay = 1000; // reset on success
     };
 
     ws.onclose = () => {
         statusDot.className = 'status-dot disconnected';
         statusText.textContent = 'Reconnecting…';
-        setTimeout(connectWebSocket, 2000);
+        // Exponential backoff reconnect
+        setTimeout(connectWebSocket, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
+    };
+
+    ws.onerror = () => {
+        // onclose will fire after this
     };
 
     ws.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) {
+            // Initial full state load
             checkboxState = new Uint8Array(event.data);
             updateCheckedCount();
             requestAnimationFrame(draw);
@@ -144,15 +149,27 @@ function connectWebSocket() {
         } else {
             try {
                 const data = JSON.parse(event.data);
+
+                // Server rate limit warning
                 if (data.error) {
                     showToast(data.error, 'error');
                     return;
                 }
+
+                // Online count broadcast
+                if (typeof data.online === 'number') {
+                    if (onlineCountEl) onlineCountEl.textContent = data.online;
+                    return;
+                }
+
+                // Checkbox toggle update
                 const { index, state } = data;
-                setBit(index, state);
-                updateCheckedCount();
-                requestAnimationFrame(draw);
-            } catch (e) { }
+                if (typeof index === 'number' && typeof state === 'boolean') {
+                    setBit(index, state);
+                    updateCheckedCount();
+                    requestAnimationFrame(draw);
+                }
+            } catch (e) {}
         }
     };
 }
@@ -179,7 +196,6 @@ function setBit(index, value) {
 function updateCheckedCount() {
     let count = 0;
     for (let i = 0; i < checkboxState.length; i++) {
-        // Brian Kernighan's bit counting algorithm
         let byte = checkboxState[i];
         while (byte) {
             count++;
@@ -199,7 +215,6 @@ function updateZoomDisplay() {
 
 // ─── Rendering ────────────────────────────────────────
 function draw() {
-    // Deep black background
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -208,7 +223,6 @@ function draw() {
     ctx.scale(camera.zoom, camera.zoom);
     ctx.translate(-camera.x, -camera.y);
 
-    // Visible range calculation
     const viewLeft = camera.x - (canvas.width / 2) / camera.zoom;
     const viewRight = camera.x + (canvas.width / 2) / camera.zoom;
     const viewTop = camera.y - (canvas.height / 2) / camera.zoom;
@@ -230,19 +244,17 @@ function draw() {
             const x = c * CELL_SIZE;
             const y = r * CELL_SIZE;
 
-            // Draw box
             ctx.beginPath();
             ctx.roundRect(x, y, BOX_SIZE, BOX_SIZE, boxRadius);
 
             if (isOn) {
-                // Crimson checked state with subtle gradient feel
                 ctx.fillStyle = COLORS.boxOn;
                 ctx.fill();
                 ctx.strokeStyle = COLORS.boxOnBorder;
                 ctx.lineWidth = 1;
                 ctx.stroke();
 
-                // Subtle inner glow for checked boxes
+                // Subtle inner glow at reasonable zoom
                 if (camera.zoom >= 0.8) {
                     ctx.fillStyle = 'rgba(255, 40, 80, 0.15)';
                     ctx.beginPath();
@@ -250,7 +262,7 @@ function draw() {
                     ctx.fill();
                 }
 
-                // Draw Checkmark
+                // Checkmark
                 ctx.strokeStyle = COLORS.checkMark;
                 ctx.lineWidth = 2;
                 ctx.lineCap = 'round';
@@ -288,7 +300,6 @@ canvas.addEventListener('mousedown', (e) => {
 });
 
 window.addEventListener('mousemove', (e) => {
-    // Update hover position
     const worldX = (e.clientX - canvas.width / 2) / camera.zoom + camera.x;
     const worldY = (e.clientY - canvas.height / 2) / camera.zoom + camera.y;
     const col = Math.floor(worldX / CELL_SIZE);
@@ -362,30 +373,11 @@ window.addEventListener('touchend', (e) => {
     isDragging = false;
 });
 
-// ─── Click Handler ────────────────────────────────────
+// ─── Click Handler (No auth needed) ───────────────────
 function handleClick(clientX, clientY) {
-    // Auto-login handles auth — if still not logged in, trigger login
-    if (!isLoggedIn) {
-        // Try silent auto-login one more time
-        fetch('/auth/auto-login')
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    isLoggedIn = true;
-                    loginBtn.classList.add('hidden');
-                    logoutBtn.classList.remove('hidden');
-                    userInfo.classList.remove('hidden');
-                    userInfo.textContent = data.user.name;
-                    showToast('Welcome! You can now toggle checkboxes', 'success');
-                    // Retry the click
-                    handleClick(clientX, clientY);
-                } else {
-                    showToast('Unable to authenticate. Please refresh.', 'error');
-                }
-            })
-            .catch(() => {
-                showToast('Connection issue. Please refresh.', 'error');
-            });
+    // Client-side rate limiting
+    if (!rateLimiter.canSend()) {
+        showToast('Slow down! Too many clicks.', 'error');
         return;
     }
 
@@ -447,12 +439,13 @@ document.getElementById('zoom-out').addEventListener('click', () => {
 document.getElementById('reset-view').addEventListener('click', () => {
     camera.x = (GRID_COLS * CELL_SIZE) / 2;
     camera.y = (GRID_ROWS * CELL_SIZE) / 2;
-    camera.zoom = 1;
+    camera.zoom = 2;
     updateZoomDisplay();
     requestAnimationFrame(draw);
 });
 
-// ─── Init Camera ──────────────────────────────────────
+// ─── Init Camera — centered at 2× zoom ───────────────
 camera.x = (GRID_COLS * CELL_SIZE) / 2;
 camera.y = (GRID_ROWS * CELL_SIZE) / 2;
+camera.zoom = 2;
 updateZoomDisplay();
