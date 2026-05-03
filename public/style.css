@@ -5,40 +5,40 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500&display=swap');
 
 :root {
-    /* Core Palette - Classic Black & Crimson */
-    --black-deep: #050505;
-    --black-rich: #0a0a0a;
-    --black-surface: #111111;
-    --black-elevated: #1a1a1a;
-    --black-border: #222222;
+    /* Core Palette - Dark Obsidian */
+    --black-deep: #09090b; /* zinc-950 */
+    --black-rich: #09090b;
+    --black-surface: #18181b; /* zinc-900 */
+    --black-elevated: #27272a; /* zinc-800 */
+    --black-border: #3f3f46; /* zinc-700 for highly visible borders */
 
     /* Crimson / Red Shaders */
-    --crimson: #dc143c;
-    --crimson-dark: #a00020;
-    --crimson-light: #ff2850;
-    --crimson-glow: rgba(220, 20, 60, 0.35);
-    --crimson-subtle: rgba(220, 20, 60, 0.08);
+    --crimson: #dc2626; /* red-600 */
+    --crimson-dark: #991b1b; /* red-800 */
+    --crimson-light: #ef4444; /* red-500 */
+    --crimson-glow: rgba(220, 38, 38, 0.4);
+    --crimson-subtle: rgba(220, 38, 38, 0.15);
 
-    /* Gold Accent — Classic Pairing */
-    --gold: #d4a849;
-    --gold-light: #f0c96e;
-    --gold-glow: rgba(212, 168, 73, 0.3);
+    /* Gold / Amber Accent for contrast */
+    --gold: #d97706; /* amber-600 */
+    --gold-light: #f59e0b; /* amber-500 */
+    --gold-glow: rgba(217, 119, 6, 0.3);
 
     /* Neutral Text */
-    --text-primary: #f0f0f0;
-    --text-secondary: #888888;
-    --text-muted: #555555;
+    --text-primary: #f4f4f5; /* zinc-100 */
+    --text-secondary: #a1a1aa; /* zinc-400 */
+    --text-muted: #71717a; /* zinc-500 */
 
     /* Functional */
-    --success: #22c55e;
-    --success-glow: rgba(34, 197, 94, 0.4);
-    --danger: #ef4444;
-    --danger-glow: rgba(239, 68, 68, 0.4);
+    --success: #16a34a; /* green-600 */
+    --success-glow: rgba(22, 163, 74, 0.4);
+    --danger: #dc2626;
+    --danger-glow: rgba(220, 38, 38, 0.4);
 
     /* Surfaces */
-    --glass-bg: rgba(15, 15, 15, 0.75);
-    --glass-border: rgba(255, 255, 255, 0.06);
-    --glass-border-hover: rgba(220, 20, 60, 0.2);
+    --glass-bg: rgba(24, 24, 27, 0.85); /* Darker glass for better contrast */
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-border-hover: rgba(220, 38, 38, 0.3);
 }
 
 * {

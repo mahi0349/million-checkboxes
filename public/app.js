@@ -49,18 +49,18 @@ const rateLimiter = {
     }
 };
 
-// ─── Classic Black & Crimson Theme Colors ─────────────
+// ─── Classic Red & Dark Obsidian Theme Colors ───────────
 const COLORS = {
-    bg: '#050505',
-    boxOff: '#111111',
-    boxOffBorder: '#1e1e1e',
-    boxOn: '#dc143c',
-    boxOnBorder: '#a00020',
-    boxOnLight: '#ff2850',
-    checkMark: '#ffffff',
-    hoverFill: 'rgba(220, 20, 60, 0.12)',
-    hoverBorder: 'rgba(220, 20, 60, 0.3)',
-    gridLine: '#0d0d0d'
+    bg: '#09090b',          // very deep rich background
+    boxOff: '#18181b',      // slightly lighter for the box
+    boxOffBorder: '#3f3f46', // very visible grey border for unchecked boxes
+    boxOn: '#dc2626',       // rich classic red
+    boxOnBorder: '#f87171', // bright red border to make it pop
+    boxOnLight: '#ef4444',  // lighter red for glow/hover
+    checkMark: '#ffffff',   // crisp white checkmark
+    hoverFill: '#27272a',   // highlight fill when hovering
+    hoverBorder: '#71717a', // brighter border on hover
+    gridLine: '#18181b'     // subtle grid pattern color
 };
 
 // Track hovered cell
