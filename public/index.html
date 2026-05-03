@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>1 Million Checkboxes</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="ui-layer">
+        <header class="glass-panel">
+            <div class="logo">
+                <div class="logo-box">✓</div>
+                <h1>1M Checkboxes</h1>
+            </div>
+            <div class="controls">
+                <div id="auth-section">
+                    <span id="user-info" class="hidden"></span>
+                    <a href="/auth/login" id="login-btn" class="btn primary">Login to Toggle</a>
+                    <a href="/auth/logout" id="logout-btn" class="btn secondary hidden">Logout</a>
+                </div>
+            </div>
+        </header>
+
+        <div class="zoom-controls glass-panel">
+            <button id="zoom-in" class="btn-icon" title="Zoom In">+</button>
+            <button id="zoom-out" class="btn-icon" title="Zoom Out">-</button>
+            <button id="reset-view" class="btn-icon" title="Reset View">⌂</button>
+        </div>
+
+        <div class="status-panel glass-panel">
+            <span id="connection-status" class="status-dot disconnected"></span>
+            <span id="status-text">Connecting...</span>
+        </div>
+
+        <div id="toast-container"></div>
+    </div>
+
+    <!-- The Grid Canvas -->
+    <canvas id="gridCanvas"></canvas>
+
+    <script src="app.js"></script>
+</body>
+</html>
