@@ -1,12 +1,16 @@
 {
   "name": "million-checkboxes",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "2.0.0",
+  "description": "A real-time collaborative experience — toggle from a million checkboxes",
+  "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "node server.js"
   },
-  "keywords": [],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["checkboxes", "realtime", "websockets", "collaborative"],
   "author": "",
   "license": "ISC",
   "dependencies": {
